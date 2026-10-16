@@ -1,0 +1,75 @@
+(async function downloadAll14PDFs() {
+    // 1. Locate all primary list items (1, 2, 3... 14) on the page
+    const listItems = Array.from(document.querySelectorAll('ol > li, tr.eprint_record, .eprint_row'));
+    
+    // Fallback: If page uses plain table rows or paragraphs
+    const targets = listItems.length > 0 ? listItems : Array.from(document.querySelectorAll('table tr')).filter(tr => tr.querySelector('a[href]'));
+
+    const items = [];
+
+    for (const el of targets) {
+        // Find the main title anchor tag inside this specific row
+        const mainLink = Array.from(el.querySelectorAll('a[href]'))
+            .find(a => a.href.includes('/id/eprint/') || a.href.match(/\/\d+\/?$/));
+
+        if (mainLink) {
+            // Get full text content from the main link element
+            let rawTitle = mainLink.textContent.trim();
+            
+            // Clean invalid filename characters (\ / : * ? " < > |)
+            let safeTitle = rawTitle
+                .replace(/[\/\\:\*\?"<>\|]/g, '-')  // Replace slashes/colons with hyphens
+                .replace(/\s+/g, ' ');              // Standardize white space
+            
+            items.push({
+                pageUrl: mainLink.href,
+                title: safeTitle
+            });
+        }
+    }
+
+    console.log(`Successfully mapped ${items.length} unique items on this page. Processing...`);
+
+    // 2. Fetch each detail page and download the corresponding PDF
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        try {
+            const res = await fetch(item.pageUrl);
+            const htmlText = await res.text();
+
+            const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+            const pdfAnchor = Array.from(doc.querySelectorAll('a[href]'))
+                .find(a => a.href.toLowerCase().endsWith('.pdf') || a.textContent.toLowerCase().includes('download'));
+
+            if (pdfAnchor) {
+                const pdfUrl = pdfAnchor.href;
+                const fileName = `${item.title}.pdf`;
+
+                console.log(`[${i + 1}/${items.length}] Downloading: "${fileName}"`);
+
+                const fileRes = await fetch(pdfUrl);
+                const blob = await fileRes.blob();
+
+                const blobUrl = URL.createObjectURL(blob);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = blobUrl;
+                downloadLink.download = fileName;
+
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+
+                document.body.removeChild(downloadLink);
+                URL.revokeObjectURL(blobUrl);
+
+                // Pause 1.2s to keep downloads ordered properly
+                await new Promise(r => setTimeout(r, 1200));
+            } else {
+                console.warn(`[${i + 1}/${items.length}] No PDF link found on page: ${item.pageUrl}`);
+            }
+        } catch (err) {
+            console.error(`Error processing item ${i + 1}:`, err);
+        }
+    }
+
+    console.log("Completed! All files downloaded with full title names.");
+})();
